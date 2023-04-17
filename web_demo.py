@@ -1,10 +1,27 @@
-from transformers import AutoModel, AutoTokenizer
+import os
+
 import gradio as gr
 import mdtex2html
+import torch
+from transformers import AutoTokenizer, AutoModel, AutoConfig
 
-tokenizer = AutoTokenizer.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True)
-model = AutoModel.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True).half().cuda()
-model = model.eval()
+model_name = "chatglm-6b"  # 模型名 或 模型路径
+checkpoint_path = ".\output\checkpoint-2000" # 模型checkpoint路径
+pre_seq_len = 128  # 模型前缀长度 跟你训练的PRE_SEQ_LEN一致
+
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+config.pre_seq_len = pre_seq_len
+model = AutoModel.from_pretrained(model_name, config=config, trust_remote_code=True)
+
+prefix_state_dict = torch.load(os.path.join(checkpoint_path, "pytorch_model.bin"))
+
+new_prefix_state_dict = {}
+for k, v in prefix_state_dict.items():
+    new_prefix_state_dict[k[len("transformer.prefix_encoder."):]] = v
+model.transformer.prefix_encoder.load_state_dict(new_prefix_state_dict)
+model.half().cuda()
 
 """Override Chatbot.postprocess"""
 
@@ -51,7 +68,7 @@ def parse_text(text):
                     line = line.replace("(", "&#40;")
                     line = line.replace(")", "&#41;")
                     line = line.replace("$", "&#36;")
-                lines[i] = "<br>"+line
+                lines[i] = "<br>" + line
     text = "".join(lines)
     return text
 
@@ -60,7 +77,7 @@ def predict(input, chatbot, max_length, top_p, temperature, history):
     chatbot.append((parse_text(input), ""))
     for response, history in model.stream_chat(tokenizer, input, history, max_length=max_length, top_p=top_p,
                                                temperature=temperature):
-        chatbot[-1] = (parse_text(input), parse_text(response))       
+        chatbot[-1] = (parse_text(input), parse_text(response))
 
         yield chatbot, history
 
